@@ -179,6 +179,13 @@ Item {
             if (root.Window.window && root.Window.window.active)
                 root.restoreFocus()
         }
+        function onVisibleChanged() {
+            // Clicking the model unload / opening the picker can change the
+            // router state while the sidebar is hidden. Ask the bridge for the
+            // current list and selection whenever the panel is shown again.
+            if (root.Window.window && root.Window.window.visible && root.bridgeReady)
+                root.send({ "cmd": "models_list" })
+        }
     }
 
     // The turn end may arrive while the state is still busy; retry once it clears.
@@ -258,7 +265,8 @@ Item {
             root.bridgeFailed = false
             tab.fakeMode = false
             tab.status = "Ready"
-            tab.currentModel = ""
+            // The bridge restores the persisted selection and reports it here.
+            tab.currentModel = event.id || ""
             tab.userText = ""
             tab.replyText = ""
             tab.metrics = ""

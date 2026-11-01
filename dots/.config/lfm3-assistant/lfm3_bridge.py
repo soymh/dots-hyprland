@@ -900,6 +900,29 @@ class Bridge:
         models = self.models_snapshot()
         return models[0].id if models else None
 
+    def selected_model_file(self) -> Path:
+        return DEFAULT_STATE_DIR / "selected-model"
+
+    def load_selected_model(self) -> str | None:
+        """Read the persisted selection. "" means deliberately unloaded."""
+        try:
+            return self.selected_model_file().read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            LOG.warning("cannot read selected model: %s", exc)
+            return None
+
+    def save_selected_model(self, model_id: str) -> None:
+        path = self.selected_model_file()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(path.name + ".tmp")
+            temporary.write_text(model_id + "\n", encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError as exc:
+            LOG.warning("cannot save selected model to %s: %s", path, exc)
+
     def no_models_message(self) -> str:
         if self.config.model_override is not None:
             return f"MODEL not found or empty: {self.config.model_override}"
@@ -1001,12 +1024,15 @@ class Bridge:
         self.emit({"type": "models", "models": self._models_payload(router_entries)})
 
     def emit_current_model(self) -> None:
-        model_id = self.current_model()
-        if model_id:
-            self.emit({"type": "model", "id": model_id})
+        # Emit even when nothing is selected: an empty id tells a freshly
+        # created UI that the user deliberately unloaded the model.
+        self.emit({"type": "model", "id": self.current_model() or ""})
 
     def models_list(self) -> None:
+        # Refresh both the list and the selection. The UI asks for this when it
+        # is created and whenever the sidebar is shown again.
         self._emit_models()
+        self.emit_current_model()
 
     def models_refresh(self) -> None:
         busy = self._busy
@@ -1023,6 +1049,7 @@ class Bridge:
         available = ids + router_only
         if self._current_model != "" and self._current_model not in available:
             self._current_model = self._select_initial_model(available)
+            self.save_selected_model(self._current_model or "")
             self.emit_current_model()
         if not models and not router_only:
             self.emit_error(self.no_models_message(), "no_models")
@@ -1038,6 +1065,7 @@ class Bridge:
         if model_id not in known:
             raise BridgeError(f"unknown model: {model_id}")
         self._current_model = model_id
+        self.save_selected_model(model_id)
         LOG.info("selected model %s", model_id)
         self.emit({"type": "model", "id": model_id})
         return model_id
@@ -1127,6 +1155,7 @@ class Bridge:
             # Keep an explicit "nothing selected" state so the UI does not fall
             # back to the first discovered model on the next refresh.
             self._current_model = ""
+            self.save_selected_model("")
         self._emit_models(router_entries)
         if current == model_id:
             self.emit({"type": "model", "id": ""})
@@ -1380,6 +1409,7 @@ class Bridge:
         available = [str(entry["id"]) for entry in router_entries]
         if self._current_model != "" and self.current_model() not in available:
             self._current_model = self._select_initial_model(available)
+            self.save_selected_model(self._current_model or "")
             self.emit_current_model()
         self._emit_models(router_entries)
 
@@ -2848,7 +2878,21 @@ class Bridge:
             str(entry["id"]) for entry in router_entries or []
             if str(entry["id"]) not in available
         ]
-        self._current_model = self._select_initial_model(available)
+        saved = self.load_selected_model()
+        if saved:
+            if saved in available:
+                self._current_model = saved
+                LOG.info("restored selected model %s", saved)
+            else:
+                LOG.warning("saved model %r is no longer available", saved)
+                self._current_model = self._select_initial_model(available)
+                self.save_selected_model(self._current_model or "")
+        elif saved == "":
+            # The user explicitly unloaded the model; keep it that way.
+            self._current_model = ""
+        else:
+            self._current_model = self._select_initial_model(available)
+            self.save_selected_model(self._current_model or "")
         selected = next(
             (
                 model
