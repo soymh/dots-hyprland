@@ -151,4 +151,40 @@ DelegateChooser {
             icon: "cut"
         }
     }
+    // BEGIN ext:waffle-envycontrol (dots-hyprland-extensions; safe to re-apply, removed by uninstall)
+    DelegateChoice {
+        roleValue: "envycontrol"
+        ActionCenterToggleButton {
+            toggleModel: EnvyControlToggle {}
+            name: toggleModel?.statusText ?? "GPU Mode"
+            icon: toggleModel?.icon ?? "developer_board"
+        }
+    }
+    // Extension fallback: any unknown type resolves to
+    // ~/.config/hypr/custom/toggles/<type>.qml if that file exists.
+    // (No roleValue: a DelegateChoice without roleValue matches any value.)
+    DelegateChoice {
+        ActionCenterToggleButton {
+            id: extensionToggle
+
+            required property var modelData
+
+            property QtObject extModel: null
+            toggleModel: extModel
+
+            icon: extModel?.icon ?? "extension"
+
+            Component.onCompleted: {
+                if (!modelData)
+                    return
+                const home = Quickshell.env("HOME")
+                const comp = Qt.createComponent(`${home}/.config/hypr/custom/toggles/${modelData}.qml`)
+                if (comp.status === Component.Ready)
+                    extModel = comp.createObject(extensionToggle)
+                else
+                    console.warn("[extensions] no toggle model for type:", modelData)
+            }
+        }
+    }
+    // END ext:waffle-envycontrol
 }

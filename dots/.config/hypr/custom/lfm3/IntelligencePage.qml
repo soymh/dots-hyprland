@@ -85,6 +85,12 @@ Item {
             tab.status = "Loading"
             root.send({ "cmd": "model_select", "id": id })
         }
+        onUnloadModel: id => {
+            if (!id)
+                return
+            tab.status = "Loading"
+            root.send({ "cmd": "model_unload", "id": id })
+        }
     }
 
     // The audio stream moves keyboard focus away when a turn ends. The layer
@@ -220,6 +226,7 @@ Item {
             root.bridgeFailed = false
             tab.fakeMode = false
             tab.status = "Ready"
+            tab.currentModel = ""
             tab.userText = ""
             tab.replyText = ""
             tab.metrics = ""
@@ -233,8 +240,8 @@ Item {
 
         case "models":
             tab.models = event.models || []
-            if (!tab.currentModel && tab.models.length > 0)
-                tab.currentModel = tab.models[0].id
+            // Selection is owned by the bridge. An empty currentModel means an
+            // explicit unload; do not silently fall back to the first id here.
             break
 
         case "model":

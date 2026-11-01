@@ -891,8 +891,10 @@ class Bridge:
             return list(self._models)
 
     def current_model(self) -> str | None:
-        if self._current_model:
-            return self._current_model
+        # "" is the explicit "everything unloaded" state; None means the user
+        # has not picked one yet, so fall back to the first discovered model.
+        if self._current_model is not None:
+            return self._current_model or None
         models = self.models_snapshot()
         return models[0].id if models else None
 
@@ -1017,7 +1019,7 @@ class Bridge:
             if str(entry["id"]) not in ids
         ]
         available = ids + router_only
-        if self._current_model not in available:
+        if self._current_model != "" and self._current_model not in available:
             self._current_model = self._select_initial_model(available)
             self.emit_current_model()
         if not models and not router_only:
@@ -1046,6 +1048,97 @@ class Bridge:
             code = "unknown_model" if message.startswith("unknown model") else "bad_command"
             self.emit_error(message, code)
 
+    def unload_model(self, model_id: str) -> str | None:
+        """Unload one model from the running router without stopping it."""
+        model_id = model_id.strip()
+        if not model_id:
+            raise BridgeError("model_unload needs an id")
+        if self._client is None:
+            raise BridgeError("httpx is not installed")
+        known = {model.id for model in self.models_snapshot()}
+        if model_id not in known:
+            router_entries = self._router_entries()
+            known.update(str(entry["id"]) for entry in router_entries or [])
+        if model_id not in known:
+            raise BridgeError(f"unknown model: {model_id}")
+        if self._busy:
+            raise BridgeError(
+                "cannot unload while a turn is active; cancel it first"
+            )
+        if not self._health(timeout=2.0):
+            raise BridgeError(
+                f"llama-server router is not running; cannot unload {model_id}"
+            )
+        current = self.current_model()
+        try:
+            response = self._client.post(
+                f"{self.config.base_url}/models/unload",
+                json={"model": model_id},
+                timeout=30.0,
+            )
+        except httpx.HTTPError as exc:
+            raise BridgeError(f"connection to llama-server failed: {exc}") from exc
+        if response.status_code >= 400:
+            body = " ".join(response.text.split())[:300]
+            raise BridgeError(
+                f"unload failed: HTTP {response.status_code} {body}".rstrip()
+            )
+        try:
+            data = response.json()
+        except (ValueError, TypeError):
+            data = {}
+        if not isinstance(data, dict) or data.get("success") is not True:
+            detail = ""
+            if isinstance(data, dict):
+                detail = str(data.get("error") or data.get("message") or "").strip()
+            message = f"router refused to unload {model_id}"
+            if detail:
+                message = f"{message}: {detail}"
+            raise BridgeError(message)
+        # The router stops the child asynchronously: POST returns before the
+        # status flips. Poll for a moment so the UI does not briefly show the
+        # model as still loaded (or a second unload as successful).
+        router_entries: list[dict[str, Any]] | None = None
+        status: str | None = None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            router_entries = self._router_entries(timeout=2.0)
+            if router_entries is None:
+                raise BridgeError(
+                    f"lost the llama-server router while unloading {model_id}"
+                )
+            entry = next(
+                (item for item in router_entries if str(item["id"]) == model_id),
+                None,
+            )
+            status = ((entry or {}).get("status") or {}).get("value")
+            if status not in ("loaded", "loading", "sleeping"):
+                break
+            time.sleep(0.1)
+        else:
+            self._emit_models(router_entries)
+            raise BridgeError(
+                f"router accepted unload but {model_id} is still {status}; "
+                "it may be serving a request, try again once idle"
+            )
+        if current == model_id:
+            # Keep an explicit "nothing selected" state so the UI does not fall
+            # back to the first discovered model on the next refresh.
+            self._current_model = ""
+        self._emit_models(router_entries)
+        if current == model_id:
+            self.emit({"type": "model", "id": ""})
+        LOG.info("unloaded model %s", model_id)
+        return self.current_model()
+
+    def model_unload(self, model_id: str) -> None:
+        try:
+            self.unload_model(model_id)
+        except BridgeError as exc:
+            message = str(exc)
+            code = "unknown_model" if message.startswith("unknown model") else "unload_failed"
+            self.emit_error(message, code)
+
     # --------------------------------------------------------- translation
 
     def translate_llama(self, text: str, source: str, target: str) -> str:
@@ -1055,6 +1148,8 @@ class Bridge:
         self.ensure_server()
         model_id = self.current_model()
         if not model_id:
+            if self.models_snapshot():
+                raise BridgeError("no model selected")
             raise BridgeError(self.no_models_message())
         payload = {
             "model": model_id,
@@ -1281,7 +1376,7 @@ class Bridge:
                 f"and {config.log_file}"
             )
         available = [str(entry["id"]) for entry in router_entries]
-        if self.current_model() not in available:
+        if self._current_model != "" and self.current_model() not in available:
             self._current_model = self._select_initial_model(available)
             self.emit_current_model()
         self._emit_models(router_entries)
@@ -2806,6 +2901,8 @@ class Bridge:
             self.models_refresh()
         elif name == "model_select":
             self.model_select(str(command.get("id") or ""))
+        elif name == "model_unload":
+            self.model_unload(str(command.get("id") or ""))
         elif name == "set_voice":
             self._speak_text = bool(command.get("enabled", True))
             self.emit({"type": "voice", "enabled": self._speak_text})
@@ -2827,7 +2924,7 @@ class ControlServer(ThreadingHTTPServer):
 
 
 class ControlHandler(BaseHTTPRequestHandler):
-    """Minimal JSON API: /health, /models, /model, /translate."""
+    """Minimal JSON API: /health, /models, /model, /model/unload, /translate."""
 
     protocol_version = "HTTP/1.1"
     server_version = "lfm3-bridge"
@@ -2921,6 +3018,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             if path == "/model":
                 self._handle_model(payload)
+            elif path == "/model/unload":
+                self._handle_model_unload(payload)
             elif path == "/translate":
                 self._handle_translate(payload)
             else:
@@ -2942,6 +3041,23 @@ class ControlHandler(BaseHTTPRequestHandler):
         except BridgeError as exc:
             message = str(exc)
             status = 404 if message.startswith("unknown model") else 400
+            raise ControlError(status, message) from None
+        self._send(200, {"ok": True, "current": current})
+
+    def _handle_model_unload(self, payload: dict[str, Any]) -> None:
+        model_id = payload.get("id", payload.get("model"))
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ControlError(400, "id is required")
+        try:
+            current = self.bridge.unload_model(model_id)
+        except BridgeError as exc:
+            message = str(exc)
+            if message.startswith("unknown model"):
+                status = 404
+            elif message.startswith("llama-server router is not running"):
+                status = 503
+            else:
+                status = 409
             raise ControlError(status, message) from None
         self._send(200, {"ok": True, "current": current})
 

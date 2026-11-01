@@ -191,7 +191,10 @@ GroupButton {
             const toggleList = Config.options.sidebar.quickToggles.android.toggles;
             const buttonType = root.buttonData.type;
             if (!toggleList.find(toggle => toggle.type === buttonType)) {
-                toggleList.push({ type: buttonType, size: 1 });
+                // BEGIN ext:ii-size-default (dots-hyprland-extensions; envycontrol re-adds wide)
+                const defaultSize = (buttonType === "envycontrol") ? 2 : 1;
+                toggleList.push({ type: buttonType, size: defaultSize });
+                // END ext:ii-size-default
             } else {
                 toggleList.splice(index, 1);
             }

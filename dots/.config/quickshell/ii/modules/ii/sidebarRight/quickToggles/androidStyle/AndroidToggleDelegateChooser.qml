@@ -6,6 +6,9 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Bluetooth
+// BEGIN ext:ii-import-qs (dots-hyprland-extensions; GlobalStates for the catch-all delegate)
+import qs
+// END ext:ii-import-qs
 
 DelegateChooser {
     id: root
@@ -260,4 +263,54 @@ DelegateChooser {
         cellSpacing: root.spacing
         cellSize: modelData.size
     } }
+    // BEGIN ext:ii-envycontrol (dots-hyprland-extensions; safe to re-apply, removed by uninstall)
+    DelegateChoice { roleValue: "envycontrol"; AndroidEnvyControlToggle {
+        required property int index
+        required property var modelData
+        buttonIndex: root.startingIndex + index
+        buttonData: modelData
+        editMode: root.editMode
+        expandedSize: modelData.size > 1
+        baseCellWidth: root.baseCellWidth
+        baseCellHeight: root.baseCellHeight
+        cellSpacing: root.spacing
+        cellSize: modelData.size
+    } }
+    // END ext:ii-envycontrol
+    // BEGIN ext:ii-generic-fallback (dots-hyprland-extensions; safe to re-apply, removed by uninstall)
+    // Any toggle type without a dedicated DelegateChoice above is loaded from
+    // ~/.config/hypr/custom/toggles/<type>.qml (QuickToggleModel-compatible).
+    // This is what lets extensions add panel toggles without editing this file.
+    DelegateChoice {
+        AndroidQuickToggleButton {
+            id: extensionToggle
+
+            required property int index
+            required property var modelData
+
+            buttonIndex: root.startingIndex + index
+            buttonData: modelData
+            editMode: root.editMode
+            expandedSize: modelData.size > 1
+            baseCellWidth: root.baseCellWidth
+            baseCellHeight: root.baseCellHeight
+            cellSpacing: root.spacing
+            cellSize: modelData.size
+
+            property QtObject extModel: null
+            toggleModel: extModel
+
+            Component.onCompleted: {
+                if (!modelData || !modelData.type)
+                    return
+                const path = `${Quickshell.env("HOME")}/.config/hypr/custom/toggles/${modelData.type}.qml`
+                const comp = Qt.createComponent(path)
+                if (comp.status === Component.Ready)
+                    extModel = comp.createObject(extensionToggle, { shellState: GlobalStates })
+                else
+                    console.warn("[extensions] no toggle model for type:", modelData.type, path)
+            }
+        }
+    }
+    // END ext:ii-generic-fallback
 }

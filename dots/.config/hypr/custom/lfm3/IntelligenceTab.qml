@@ -77,6 +77,7 @@ Item {
     signal cancel()
     signal newConversation()
     signal selectModel(string id)
+    signal unloadModel(string id)
 
     // ------------------------------------------------------------------
     // Derived state
@@ -115,6 +116,9 @@ Item {
     }
     readonly property string currentModelName: root.currentModelInfo ? String(root.currentModelInfo.name) : root.currentModel
     readonly property bool currentModelLoaded: root.currentModelInfo ? root.currentModelInfo.loaded === true : false
+    readonly property string modelPillLabel: root.currentModelName.length > 0
+        ? root.currentModelName
+        : (root.modelCount > 0 ? "No model loaded" : "Choose a model")
 
     readonly property color ink: "#e6ebf0"
     readonly property color ink2: "#aeb8c3"
@@ -308,6 +312,15 @@ Item {
         root.currentModel = id
         root.modelMenuOpen = false
         root.selectModel(id)
+        Qt.callLater(() => input.forceActiveFocus())
+    }
+
+    function unloadCurrentModel() {
+        if (!root.currentModel || !root.currentModelLoaded)
+            return
+        var id = root.currentModel
+        root.modelMenuOpen = false
+        root.unloadModel(id)
         Qt.callLater(() => input.forceActiveFocus())
     }
 
@@ -576,7 +589,7 @@ Item {
                 Text {
                     width: pillRow.width - 11
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.currentModelName.length > 0 ? root.currentModelName : "Choose a model"
+                    text: root.modelPillLabel
                     color: root.currentModelName.length > 0 ? root.ink : root.muted
                     font.family: root.sansFamily
                     font.pixelSize: 12
@@ -1779,6 +1792,49 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: root.chooseModel(modelData.id)
                         }
+                    }
+                }
+
+                // Explicit unload for the model currently in memory, so the
+                // card can be freed without switching models or restarting.
+                Rectangle {
+                    id: unloadRow
+                    width: parent.width
+                    height: 34
+                    radius: 9
+                    visible: root.currentModelLoaded && root.currentModel.length > 0
+                    color: unloadHover.containsMouse ? "#1fff6b6b" : "transparent"
+
+                    Icon {
+                        id: unloadIcon
+                        anchors.left: parent.left
+                        anchors.leftMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 11
+                        height: 11
+                        kind: "close"
+                        color: unloadHover.containsMouse ? "#ff9a9a" : root.ink2
+                    }
+
+                    Text {
+                        anchors.left: unloadIcon.right
+                        anchors.leftMargin: 8
+                        anchors.right: parent.right
+                        anchors.rightMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Unload " + root.currentModelName
+                        color: unloadHover.containsMouse ? "#ffb3b3" : root.ink2
+                        font.family: root.sansFamily
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
+                    }
+
+                    MouseArea {
+                        id: unloadHover
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.unloadCurrentModel()
                     }
                 }
 
