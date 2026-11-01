@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 from array import array
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -823,6 +823,8 @@ class Bridge:
         self._stop = threading.Event()
         self._busy = False
         self._turn_thread: threading.Thread | None = None
+        self._pending_turns: deque[tuple[str, list[dict[str, Any]]]] = deque()
+        self._queue_lock = threading.Lock()
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT}
         ]
@@ -1936,26 +1938,27 @@ class Bridge:
         if not text and not prepared:
             self.emit_error("empty text", "bad_command")
             return
-        if self.voice_active():
-            self._voice_cancel.set()
-            if not self.wait_voice(5.0):
-                self.emit_error("voice is still active", "busy")
-                return
-        with self._turn_lock:
-            busy = self._busy
-        if busy:
-            # Ask the previous turn to stop, then give it a moment to unwind.
-            self._cancel.set()
-            started = time.monotonic()
-            while time.monotonic() - started < 5.0:
-                with self._turn_lock:
-                    if not self._busy:
-                        break
-                time.sleep(0.05)
+        pending = 0
+        with self._queue_lock:
+            with self._turn_lock:
+                busy = self._busy
+            if busy or self.voice_active() or self._pending_turns:
+                # A turn (or its spoken tail) is still running. Keep this prompt
+                # in order instead of rejecting it and losing the draft.
+                self._pending_turns.append((text, prepared))
+                pending = len(self._pending_turns)
+            else:
+                if not self._launch_turn(text, prepared):
+                    self._pending_turns.append((text, prepared))
+                    pending = len(self._pending_turns)
+        if pending:
+            self.emit({"type": "queued", "text": text, "pending": pending})
+
+    def _launch_turn(self, text: str, prepared: list[dict[str, Any]]) -> bool:
+        """Start a turn. Caller holds _queue_lock."""
         with self._turn_lock:
             if self._busy:
-                self.emit_error("busy with another request", "busy")
-                return
+                return False
             self._busy = True
             self._cancel.clear()
             self._partial_text = ""
@@ -1967,6 +1970,18 @@ class Bridge:
             )
             self._turn_thread = thread
             thread.start()
+        return True
+
+    def _start_next_queued(self) -> None:
+        with self._queue_lock:
+            if not self._pending_turns or self._busy or self.voice_active():
+                return
+            text, prepared = self._pending_turns.popleft()
+            pending = len(self._pending_turns)
+            if not self._launch_turn(text, prepared):
+                self._pending_turns.appendleft((text, prepared))
+                return
+        self.emit({"type": "queue", "pending": pending})
 
     def wait_turn(self, timeout: float = 5.0) -> None:
         thread = self._turn_thread
@@ -2051,6 +2066,7 @@ class Bridge:
             with self._turn_lock:
                 self._busy = False
                 self._turn_thread = None
+            self._start_next_queued()
 
     def speak_text(self, text: str, model_id: str) -> None:
         """Speak a typed answer through /tts. Failure is non-fatal."""
@@ -2374,6 +2390,7 @@ class Bridge:
             self.touch()
             with self._voice_lock:
                 self._voice_thread = None
+            self._start_next_queued()
             LOG.info("voice session ended")
 
     def _voice_capture_loop(self, ws: Any, state: VoiceState) -> None:
@@ -2780,6 +2797,8 @@ class Bridge:
     # --------------------------------------------------------------- commands
 
     def new_conversation(self) -> None:
+        with self._queue_lock:
+            self._pending_turns.clear()
         with self._turn_lock:
             if self._busy:
                 self._cancel.set()
@@ -2789,12 +2808,16 @@ class Bridge:
         self.emit({"type": "state", "state": "idle"})
 
     def cancel(self) -> None:
+        with self._queue_lock:
+            self._pending_turns.clear()
         self._cancel.set()
         self._voice_cancel.set()
         if not self._busy and not self.voice_active():
             self.emit({"type": "state", "state": "idle"})
 
     def shutdown(self) -> None:
+        with self._queue_lock:
+            self._pending_turns.clear()
         self._stop.set()
         self._cancel.set()
         self._voice_cancel.set()

@@ -56,8 +56,9 @@ Item {
 
         onSubmitText: (text, attachments) => {
             if (!root.send({ "cmd": "text", "text": text, "attachments": attachments || [] })) {
-                // The tab cleared the chips optimistically; put them back so the
+                // The tab cleared the composer optimistically; put it back so the
                 // user can retry once the bridge is running.
+                tab.setDraft(text)
                 for (var i = 0; i < (attachments || []).length; ++i)
                     tab.addAttachment(attachments[i])
             }
@@ -66,7 +67,7 @@ Item {
             tab.status = "Listening"
             root.send({ "cmd": "start_listen" })
         }
-        onStopListening: root.send({ "cmd": "stop_listen", "commit": true })
+        onStopListening: commit => root.send({ "cmd": "stop_listen", "commit": commit })
         onCancel: {
             tab.status = "Ready"
             root.send({ "cmd": "cancel" })
@@ -78,6 +79,7 @@ Item {
             tab.turns = []
             tab.toolEvents = []
             tab.clearMedia()
+            tab.queuedCount = 0
             tab.status = "Ready"
             root.send({ "cmd": "new" })
         }
@@ -103,7 +105,7 @@ Item {
     function restoreFocus() {
         if (!root.isCurrentPage || !root.visible)
             return
-        if (tab.modelMenuOpen || tab.transcriptOpen || tab.attachmentPickerOpen || tab.listening || tab.busy)
+        if (tab.modelMenuOpen || tab.transcriptOpen || tab.attachmentPickerOpen || tab.listening)
             return
 
         var win = root.Window.window
@@ -129,7 +131,7 @@ Item {
         onTriggered: {
             if (!root.isCurrentPage || !root.visible)
                 return
-            if (tab.modelMenuOpen || tab.transcriptOpen || tab.attachmentPickerOpen || tab.listening || tab.busy)
+            if (tab.modelMenuOpen || tab.transcriptOpen || tab.attachmentPickerOpen || tab.listening)
                 return
             tab.focusComposer()
             var win = root.Window.window
@@ -164,13 +166,14 @@ Item {
         onTriggered: {
             if (!root.isCurrentPage || !root.visible)
                 return
-            if (tab.modelMenuOpen || tab.transcriptOpen || tab.attachmentPickerOpen || tab.busy || tab.listening)
+            if (tab.modelMenuOpen || tab.transcriptOpen || tab.attachmentPickerOpen || tab.listening)
                 return
-            var win = root.Window.window
-            if (!win || !win.active)
-                return
-            if (!tab.inputActive)
+            if (!tab.inputActive) {
+                var win = root.Window.window
+                if (win)
+                    win.requestActivate()
                 tab.focusComposer()
+            }
         }
     }
 
@@ -234,6 +237,7 @@ Item {
             tab.toolEvents = []
             tab.clearMedia()
             tab.clearAttachments()
+            tab.queuedCount = 0
             root.send({ "cmd": "models_list" })
             root.send({ "cmd": "set_voice", "enabled": tab.voiceOn })
             break
@@ -249,8 +253,15 @@ Item {
             tab.status = "Ready"
             break
 
+        case "queued":
+        case "queue":
+            tab.queuedCount = Math.max(0, Number(event.pending) || 0)
+            focusRestore.restart()
+            break
+
         case "state":
             if (event.state === "idle") {
+                tab.listening = false
                 tab.status = "Ready"
                 focusRestore.restart()
             } else if (event.state === "listening")
@@ -332,10 +343,12 @@ Item {
             break
 
         case "error":
+            tab.listening = false
             tab.status = "Failed"
             tab.metrics = event.message || "Local assistant error"
             if (tab.replyText.length === 0)
                 tab.replyText = event.message || "The local assistant could not answer."
+            focusRestore.restart()
             break
 
         default:

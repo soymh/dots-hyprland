@@ -73,7 +73,8 @@ Item {
 
     signal submitText(string text, var attachments)
     signal startListening()
-    signal stopListening()
+    signal stopListening(bool commit)
+    property int queuedCount: 0
     signal cancel()
     signal newConversation()
     signal selectModel(string id)
@@ -409,7 +410,7 @@ Item {
             return
         root.listening = false
         root.audioLevel = 0
-        root.stopListening()
+        root.stopListening(commit)
 
         if (!root.fakeMode) {
             // The backend owns the rest; show Thinking until it answers.
@@ -437,7 +438,7 @@ Item {
             if (root.listening) {
                 _endListening(true)
             } else {
-                root.stopListening()
+                root.stopListening(true)
                 root.status = "Ready"
             }
         } else {
@@ -462,7 +463,7 @@ Item {
             if (root.listening)
                 _endListening(false)
             else
-                root.stopListening()
+                root.stopListening(false)
             root.status = "Ready"
             root.cancel()
             return
@@ -480,7 +481,7 @@ Item {
             if (root.listening)
                 _endListening(false)
             else
-                root.stopListening()
+                root.stopListening(false)
         }
         root.userText = ""
         root.replyText = ""
@@ -978,8 +979,11 @@ Item {
                         }
                     }
                     onReleased: {
-                        if (root.isListening && Date.now() - pressedAt > 240)
-                            root._toggleListening()
+                        if (root.isListening) {
+                            // A short tap cancels; a hold commits. Either way,
+                            // do not leave the local `listening` latch set.
+                            root._endListening(Date.now() - pressedAt >= 240)
+                        }
                     }
                     onClicked: {
                         if (Date.now() - pressedAt > 240)
@@ -1005,9 +1009,11 @@ Item {
             }
             text: root.isListening
                   ? "Listening... release to send, or press Esc to cancel."
-                  : (root.busy
-                     ? "Escape stops the reply."
-                     : "Hold Space to talk, or press Enter to send.")
+                  : (root.queuedCount > 0
+                     ? root.queuedCount + (root.queuedCount === 1 ? " prompt queued." : " prompts queued.")
+                     : (root.busy
+                        ? "Escape stops the reply."
+                        : "Hold Space to talk, or press Enter to send."))
             color: root.muted
             font.family: root.sansFamily
             font.pixelSize: 11
