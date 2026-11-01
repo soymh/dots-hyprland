@@ -9,6 +9,61 @@ local hyprScripts = "$HOME/.config/hypr/hyprland/scripts"
 local qsIpcCall = "qs -c $qsConfig ipc call"
 local qsIsAlive = qsIpcCall .. " TEST_ALIVE"
 
+-- Tapping Super opens the overview on release (`SUPER + SUPER_L/R` below).
+-- Quickshell cannot tell that another key was pressed during the hold, so every
+-- Super shortcut has to cancel that pending release toggle first. Without this,
+-- the shortcut runs and then the overview opens on Super release.
+do
+    local raw_bind = hl.bind
+    local interrupt = hl.dsp.global("quickshell:searchToggleReleaseInterrupt")
+
+    local function split_keys(keys)
+        local parts = {}
+        for part in tostring(keys):gmatch("[^+]+") do
+            parts[#parts + 1] = part:match("^%s*(.-)%s*$")
+        end
+        return parts
+    end
+
+    local function is_super_tap(keys)
+        local parts = split_keys(keys)
+        local key = parts[#parts]
+        if key ~= "SUPER_L" and key ~= "SUPER_R" then return false end
+        for i = 1, #parts - 1 do
+            local mod = parts[i]
+            if mod ~= "SUPER" and mod ~= "SUPER_L" and mod ~= "SUPER_R" then
+                return false
+            end
+        end
+        return true
+    end
+
+    local function has_super(keys)
+        for _, part in ipairs(split_keys(keys)) do
+            if part == "SUPER" or part == "SUPER_L" or part == "SUPER_R" then
+                return true
+            end
+        end
+        return false
+    end
+
+    hl.bind = function(keys, dispatcher, opts)
+        opts = opts or {}
+        if has_super(keys) and not is_super_tap(keys) and not opts.release and not opts.mouse then
+            local action = dispatcher
+            dispatcher = function()
+                hl.dispatch(interrupt)
+                if type(action) == "function" then
+                    action()
+                else
+                    hl.dispatch(action)
+                end
+            end
+        end
+        return raw_bind(keys, dispatcher, opts)
+    end
+end
+
 hl.bind("SUPER + SUPER_L", hl.dsp.global("quickshell:searchToggleRelease"), { description = "Shell: Toggle search" })
 hl.bind("SUPER + SUPER_R", hl.dsp.global("quickshell:searchToggleRelease"))
 hl.bind("SUPER + SUPER_L", hl.dsp.exec_cmd(qsIsAlive .. " || pkill fuzzel || fuzzel"))
@@ -23,12 +78,7 @@ hl.bind("SUPER_R", hl.dsp.global("quickshell:workspaceNumber"),
 hl.bind("SUPER + Tab", hl.dsp.global("quickshell:overviewWorkspacesToggle"), { description = "Shell: Toggle overview" })
 hl.bind("SUPER + V", hl.dsp.global("quickshell:overviewClipboardToggle"))
 hl.bind("SUPER + Period", hl.dsp.global("quickshell:overviewEmojiToggle"))
-hl.bind("SUPER + A", function()
-    -- Suppress the Super-release overview/search toggle that would otherwise
-    -- fire after releasing Super while the sidebar is open.
-    hl.dispatch(hl.dsp.global("quickshell:searchToggleReleaseInterrupt"))
-    hl.dispatch(hl.dsp.global("quickshell:sidebarLeftToggle"))
-end, { description = "Shell: Toggle left sidebar" })
+hl.bind("SUPER + A", hl.dsp.global("quickshell:sidebarLeftToggle"), { description = "Shell: Toggle left sidebar" })
 hl.bind("SUPER + ALT + A", hl.dsp.global("quickshell:sidebarLeftToggleDetach"))
 hl.bind("SUPER + B", hl.dsp.global("quickshell:sidebarLeftToggle"))
 hl.bind("SUPER + O", hl.dsp.global("quickshell:sidebarLeftToggle"))
