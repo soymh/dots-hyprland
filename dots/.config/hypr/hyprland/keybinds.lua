@@ -49,16 +49,22 @@ do
 
     hl.bind = function(keys, dispatcher, opts)
         opts = opts or {}
-        if has_super(keys) and not is_super_tap(keys) and not opts.release and not opts.mouse then
-            local action = dispatcher
-            dispatcher = function()
-                hl.dispatch(interrupt)
-                if type(action) == "function" then
-                    action()
-                else
-                    hl.dispatch(action)
-                end
+        if has_super(keys) and not is_super_tap(keys)
+                and not opts.release and not opts.mouse
+                and not opts.click and not opts.drag then
+            -- Dispatch the interrupt from a separate bind. Calling
+            -- hl.dsp.global() inside the action callback makes Hyprland request
+            -- a follow-up bind release, which re-runs that callback and runs
+            -- the real action twice. A dedicated bind is idempotent, and
+            -- registering it first keeps the interrupt ahead of the action.
+            local iopts = {}
+            for key, value in pairs(opts) do
+                iopts[key] = value
             end
+            iopts.description = nil
+            iopts.desc = nil
+            iopts.release = nil
+            raw_bind(keys, function() hl.dispatch(interrupt) end, iopts)
         end
         return raw_bind(keys, dispatcher, opts)
     end
