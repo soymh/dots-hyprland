@@ -6,7 +6,6 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 
 Item {
     id: root
@@ -111,7 +110,7 @@ Item {
             // requestActivate alone is not reliable for a layer-shell surface
             // after the audio stream releases the keyboard. Hold Exclusive for
             // a short moment, then return to OnDemand for click-outside close.
-            win.WlrLayershell.keyboardFocus = WlrKeyboardFocus.Exclusive
+            win.forceKeyboardFocus = true
             focusKickEnd.restart()
         } catch (e) {
             // ignore; the normal focus path still runs
@@ -139,7 +138,7 @@ Item {
             if (!win)
                 return
             try {
-                win.WlrLayershell.keyboardFocus = WlrKeyboardFocus.OnDemand
+                win.forceKeyboardFocus = false
             } catch (e) {
                 // ignore
             }
