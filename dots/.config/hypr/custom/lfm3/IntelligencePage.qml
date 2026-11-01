@@ -6,6 +6,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 
 Item {
     id: root
@@ -102,17 +103,47 @@ Item {
     // ask the compositor for keyboard focus again, then the composer can take
     // it. WlrLayershell.keyboardFocus stays OnDemand so click-outside still
     // collapses the sidebar.
+    function focusKick() {
+        var win = root.Window.window
+        if (!win)
+            return
+        try {
+            // requestActivate alone is not reliable for a layer-shell surface
+            // after the audio stream releases the keyboard. Hold Exclusive for
+            // a short moment, then return to OnDemand for click-outside close.
+            win.WlrLayershell.keyboardFocus = WlrKeyboardFocus.Exclusive
+            focusKickEnd.restart()
+        } catch (e) {
+            // ignore; the normal focus path still runs
+        }
+        win.requestActivate()
+    }
+
     function restoreFocus() {
         if (!root.isCurrentPage || !root.visible)
             return
         if (tab.modelMenuOpen || tab.transcriptOpen || tab.attachmentPickerOpen || tab.listening)
             return
 
-        var win = root.Window.window
-        if (win)
-            win.requestActivate()
+        root.focusKick()
         Qt.callLater(() => tab.focusComposer())
         focusRetry.restart()
+    }
+
+    Timer {
+        id: focusKickEnd
+        interval: 160
+        repeat: false
+        onTriggered: {
+            var win = root.Window.window
+            if (!win)
+                return
+            try {
+                win.WlrLayershell.keyboardFocus = WlrKeyboardFocus.OnDemand
+            } catch (e) {
+                // ignore
+            }
+        }
     }
 
     // Restore just after the stream is done, then once more shortly after:
@@ -133,6 +164,7 @@ Item {
                 return
             if (tab.modelMenuOpen || tab.transcriptOpen || tab.attachmentPickerOpen || tab.listening)
                 return
+            root.focusKick()
             tab.focusComposer()
             var win = root.Window.window
             if (win && !tab.inputActive)
@@ -169,9 +201,7 @@ Item {
             if (tab.modelMenuOpen || tab.transcriptOpen || tab.attachmentPickerOpen || tab.listening)
                 return
             if (!tab.inputActive) {
-                var win = root.Window.window
-                if (win)
-                    win.requestActivate()
+                root.focusKick()
                 tab.focusComposer()
             }
         }
