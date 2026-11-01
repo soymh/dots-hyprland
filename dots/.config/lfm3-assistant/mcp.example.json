@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "example": {
+      "command": "/usr/bin/python3",
+      "args": ["-m", "your_mcp_server_module"],
+      "env": {
+        "EXAMPLE_TOKEN": "change-me"
+      },
+      "cwd": "/home/you/mcp-servers",
+      "timeout_ms": 30000
+    }
+  }
+}

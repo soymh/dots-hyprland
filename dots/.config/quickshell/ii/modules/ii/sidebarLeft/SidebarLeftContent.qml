@@ -6,6 +6,9 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Qt5Compat.GraphicalEffects
 import Qt.labs.synchronizer
+// BEGIN ext:lfm3-import (Quickshell.env for the Intelligence tab loader)
+import Quickshell
+// END ext:lfm3-import
 
 Item {
     id: root
@@ -92,14 +95,58 @@ Item {
             }
         }
 
+
+        // BEGIN ext:lfm3-intelligence (dots-hyprland-extensions; safe to re-apply, removed by uninstall)
+        // The Intelligence tab now loads the native LFM3 assistant from the
+        // persistent custom directory. AiChat stays as a hidden fallback.
         Component {
             id: aiChat
-            AiChat {}
+            Item {
+                property bool pageCurrent: SwipeView.isCurrentItem
+                Loader {
+                    id: lfm3IntelligenceLoader
+                    anchors.fill: parent
+                    source: "file://" + Quickshell.env("HOME") + "/.config/hypr/custom/lfm3/IntelligencePage.qml"
+                    onLoaded: item.isCurrentPage = Qt.binding(() => pageCurrent)
+                    onStatusChanged: {
+                        if (status === Loader.Error)
+                            console.warn("[lfm3] Intelligence page failed:", errorString)
+                    }
+                }
+                AiChat {
+                    anchors.fill: parent
+                    visible: lfm3IntelligenceLoader.status === Loader.Error
+                    enabled: visible
+                }
+            }
         }
+        // END ext:lfm3-intelligence
+
+        // BEGIN ext:lfm3-translator (dots-hyprland-extensions; safe to re-apply, removed by uninstall)
+        // The Translator tab now loads the native page from the persistent
+        // custom directory. Translator stays as a hidden fallback.
         Component {
             id: translator
-            Translator {}
+            Item {
+                property bool pageCurrent: SwipeView.isCurrentItem
+                Loader {
+                    id: lfm3TranslatorLoader
+                    anchors.fill: parent
+                    source: "file://" + Quickshell.env("HOME") + "/.config/hypr/custom/lfm3/TranslatorTab.qml"
+                    onLoaded: item.isCurrentPage = Qt.binding(() => pageCurrent)
+                    onStatusChanged: {
+                        if (status === Loader.Error)
+                            console.warn("[lfm3] Translator page failed:", errorString)
+                    }
+                }
+                Translator {
+                    anchors.fill: parent
+                    visible: lfm3TranslatorLoader.status === Loader.Error
+                    enabled: visible
+                }
+            }
         }
+        // END ext:lfm3-translator
         Component {
             id: anime
             Anime {}

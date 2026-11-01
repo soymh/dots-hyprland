@@ -11,7 +11,17 @@ case "${SKIP_MISCCONF}" in
     for i in $(find dots/.config/ -mindepth 1 -maxdepth 1 ! -name 'quickshell' ! -name 'fish' ! -name 'hypr' ! -name 'fontconfig' -exec basename {} \;); do
 #      i="dots/.config/$i"
       echo "[$0]: Found target: dots/.config/$i"
-      if [ -d "dots/.config/$i" ];then install_dir__sync "dots/.config/$i" "$XDG_CONFIG_HOME/$i"
+      # Local fork: these dirs hold live user state (config.json, config.env,
+      # models.ini, presets, translations...). Copy without --delete so an
+      # update never wipes user data that is not tracked in the repo.
+      case "$i" in
+        illogical-impulse|lfm3-assistant) sync_this_dir=false ;;
+        *) sync_this_dir=true ;;
+      esac
+      if [ -d "dots/.config/$i" ];then
+        if ${sync_this_dir};then install_dir__sync "dots/.config/$i" "$XDG_CONFIG_HOME/$i"
+        else install_dir "dots/.config/$i" "$XDG_CONFIG_HOME/$i"
+        fi
       elif [ -f "dots/.config/$i" ];then install_file "dots/.config/$i" "$XDG_CONFIG_HOME/$i"
       fi
     done
